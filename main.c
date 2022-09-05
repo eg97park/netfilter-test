@@ -20,7 +20,8 @@ sudo iptables -A INPUT -j NFQUEUE --queue-num 0;
 #include "bm.h"
 
 
-static char* target_string;
+static char* g_target_string;
+static BmCtx* g_ctx;
 
 /**
  * @brief https://github.com/eg97park/pcap-test/blob/main/pcap-test.c
@@ -92,15 +93,12 @@ int is_malicious(unsigned char **data, int len)
 				payload = *data + _ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4;
 				payload_len = len - (_ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4);
 
-				// 전역변수로 선언된 target_string 문자열이 payload에 존재하는지 확인.
-				BmCtx* ctx = BoyerMooreCtxInit((uint8_t*)target_string, strlen(target_string));
-				char* ptr = BoyerMoore(target_string, strlen(target_string), payload, payload_len, ctx);
+				// 전역변수로 선언된 g_target_string 문자열이 payload에 존재하는지 확인.
+				char* ptr = BoyerMoore(g_target_string, strlen(g_target_string), payload, payload_len, g_ctx);
 				if (ptr != NULL){
 					// 존재한다면, 1 반환.
-					BoyerMooreCtxDeInit(ctx);
 					return 1;
 				}
-				BoyerMooreCtxDeInit(ctx);
 			}
 		}
 	}
@@ -211,31 +209,36 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
-	// make target_string like "\r\nHost: <argv[1]>"
-	// sample target_string: "\r\nHost: test.gilgil.net"
-	target_string = (char*)malloc(strlen("\r\nHost: ") + strlen(argv[1]));
-	memcpy(target_string, "\r\nHost: ", strlen("\r\nHost: "));
-	memcpy(target_string + strlen("\r\nHost: "), argv[1], strlen(argv[1]));
+	// make g_target_string like "\r\nHost: <argv[1]>"
+	// sample g_target_string: "\r\nHost: test.gilgil.net"
+	g_target_string = (char*)malloc(strlen("\r\nHost: ") + strlen(argv[1]));
+	memcpy(g_target_string, "\r\nHost: ", strlen("\r\nHost: "));
+	memcpy(g_target_string + strlen("\r\nHost: "), argv[1], strlen(argv[1]));
+
+	g_ctx = BoyerMooreCtxInit((uint8_t*)g_target_string, strlen(g_target_string));
 
 	printf("opening library handle\n");
 	h = nfq_open();
 	if (!h) {
 		fprintf(stderr, "error during nfq_open()\n");
-		free(target_string);
+		BoyerMooreCtxDeInit(g_ctx);
+		free(g_target_string);
 		exit(1);
 	}
 
 	printf("unbinding existing nf_queue handler for AF_INET (if any)\n");
 	if (nfq_unbind_pf(h, AF_INET) < 0) {
 		fprintf(stderr, "error during nfq_unbind_pf()\n");
-		free(target_string);
+		BoyerMooreCtxDeInit(g_ctx);
+		free(g_target_string);
 		exit(1);
 	}
 
 	printf("binding nfnetlink_queue as nf_queue handler for AF_INET\n");
 	if (nfq_bind_pf(h, AF_INET) < 0) {
 		fprintf(stderr, "error during nfq_bind_pf()\n");
-		free(target_string);
+		BoyerMooreCtxDeInit(g_ctx);
+		free(g_target_string);
 		exit(1);
 	}
 
@@ -243,14 +246,16 @@ int main(int argc, char **argv)
 	qh = nfq_create_queue(h, queue, &cb, NULL);
 	if (!qh) {
 		fprintf(stderr, "error during nfq_create_queue()\n");
-		free(target_string);
+		BoyerMooreCtxDeInit(g_ctx);
+		free(g_target_string);
 		exit(1);
 	}
 
 	printf("setting copy_packet mode\n");
 	if (nfq_set_mode(qh, NFQNL_COPY_PACKET, 0xffff) < 0) {
 		fprintf(stderr, "can't set packet_copy mode\n");
-		free(target_string);
+		BoyerMooreCtxDeInit(g_ctx);
+		free(g_target_string);
 		exit(1);
 	}
 
@@ -304,6 +309,7 @@ int main(int argc, char **argv)
 	printf("closing library handle\n");
 	nfq_close(h);
 
-	free(target_string);
+	BoyerMooreCtxDeInit(g_ctx);
+	free(g_target_string);
 	exit(0);
 }
