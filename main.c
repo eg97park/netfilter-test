@@ -85,7 +85,6 @@ void dump(unsigned char* buf, int size) {
  */
 int is_malicious(unsigned char **data, int len)
 {
-	printf("\n@is_malicious: target_host=%s\n", target_host);
 	unsigned char *payload = NULL;
 	uint32_t payload_len = 0;
 	struct MY_ETH* _ethhdr = (struct MY_ETH*)*data;
