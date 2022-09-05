@@ -19,8 +19,10 @@ sudo iptables -A INPUT -j NFQUEUE --queue-num 0;
 
 #include <libnetfilter_queue/libnetfilter_queue.h>
 
+#include "bm.h"
 
-static char* target_host;
+
+static char* target_string;
 
 /**
  * @brief https://github.com/eg97park/pcap-test/blob/main/pcap-test.c
@@ -88,20 +90,26 @@ int is_malicious(unsigned char **data, int len)
 	unsigned char *payload = NULL;
 	uint32_t payload_len = 0;
 	struct MY_ETH* _ethhdr = (struct MY_ETH*)*data;
+
+	// catch IPv4
 	if ((*data)[0] == '\x45'){
 		struct MY_IPV4* _ipv4hdr = (struct MY_IPV4*)(*data);
+
+		// catch TCP
 		if (_ipv4hdr->PROTOCOL == 0x06){
 			struct MY_TCP* _tcphdr = (struct MY_TCP*)(*data + _ipv4hdr->IHL * 4);
+
+			// catch dst.port = 80
 			if (_tcphdr->DST_PORT == 0x5000){
 				payload = *data + _ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4;
 				payload_len = len - (_ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4);
-				char* ptr = strstr(payload, "\r\nHost: ");
+
+				// catch "\r\nHost: <argv[1]>"
+				BmCtx* ctx = BoyerMooreCtxInit((uint8_t*)target_string, strlen(target_string));
+				char* ptr = BoyerMoore(target_string, strlen(target_string), payload, payload_len, ctx);
 				if (ptr != NULL){
-					ptr += 8;
-					if (strstr(ptr, target_host) != NULL){
-						dump(payload, payload_len);
-						return 1;
-					}
+					dump(payload, payload_len);
+					return 1;
 				}
 			}
 		}
@@ -214,9 +222,11 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
-	// copy argv[1] to target_host
-	target_host = (char*)malloc(sizeof(char) * strlen(argv[1]));
-	memcpy(target_host, argv[1], strlen(argv[1]));
+	// make target_string like "\r\nHost: <argv[1]>"
+	// sample target_string: "\r\nHost: test.gilgil.net"
+	target_string = (char*)malloc(strlen("\r\nHost: ") + strlen(argv[1]));
+	memcpy(target_string, "\r\nHost: ", strlen("\r\nHost: "));
+	memcpy(target_string + strlen("\r\nHost: "), argv[1], strlen(argv[1]));
 
 	printf("opening library handle\n");
 	h = nfq_open();
