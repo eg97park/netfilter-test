@@ -10,6 +10,7 @@ sudo iptables -A INPUT -j NFQUEUE --queue-num 0;
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <netinet/in.h>
 #include <linux/types.h>
@@ -17,6 +18,25 @@ sudo iptables -A INPUT -j NFQUEUE --queue-num 0;
 #include <errno.h>
 
 #include <libnetfilter_queue/libnetfilter_queue.h>
+
+
+static char* target_host;
+
+
+/**
+ * @brief check malicious host from given payload
+ * 
+ * @param[in] data packet payload
+ * @param[in] len packet length
+ * @return[out] int 1:malicious, 0:normal
+ */
+int is_malicious(unsigned char **data, int len)
+{
+	printf("@check_malicious\n");
+	printf("@check_malicious: target_host=%s\n", target_host);
+	return 0;
+}
+
 
 /* returns packet id */
 static uint32_t print_pkt (struct nfq_data *tb)
@@ -76,15 +96,13 @@ static uint32_t print_pkt (struct nfq_data *tb)
 
 	ret = nfq_get_payload(tb, &data);
 	if (ret >= 0){
-		/**
-		 * @todo find start address of data from unsigned char *data
-		 * 1. parse and check host.
-		 * 2-1. if host is malicious, then return -1
-		 * 2-2. else, continue
-		 */
 		printf("payload_len=%d ", ret);
+
+		// check packet. if packet is malicous, then id *= (-1)
+		if (is_malicious(&data, ret)){
+			id = id * (-1);
+		}
 	}
-		
 
 	fputc('\n', stdout);
 
@@ -97,9 +115,11 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 {
 	uint32_t id = print_pkt(nfa);
 	printf("entering callback\n");
-	/**
-	 * @todo if id is -1, NF_DROP
-	 */
+
+	// if id < 0, DROP
+	if (id < 0){
+		return nfq_set_verdict(qh, id * (-1), NF_DROP, 0, NULL);
+	}
 	return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
 }
 
@@ -112,13 +132,16 @@ int main(int argc, char **argv)
 	uint32_t queue = 0;
 	char buf[4096] __attribute__ ((aligned));
 
-	if (argc == 2) {
-		queue = atoi(argv[1]);
-		if (queue > 65535) {
-			fprintf(stderr, "Usage: %s [<0-65535>]\n", argv[0]);
-			exit(EXIT_FAILURE);
-		}
+	// modify usage
+	if (argc != 2) {
+		fprintf(stderr, "syntax : %s <host>\n", argv[0]);
+		fprintf(stderr, "sample : %s test.gilgil.net", argv[0]);
+		exit(EXIT_FAILURE);
 	}
+
+	// copy argv[1] to target_host
+	target_host = (char*)malloc(sizeof(char) * strlen(argv[1]));
+	memcpy(target_host, argv[1], strlen(argv[1]));
 
 	printf("opening library handle\n");
 	h = nfq_open();
