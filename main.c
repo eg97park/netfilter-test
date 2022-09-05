@@ -97,8 +97,10 @@ int is_malicious(unsigned char **data, int len)
 				char* ptr = BoyerMoore(target_string, strlen(target_string), payload, payload_len, ctx);
 				if (ptr != NULL){
 					// 존재한다면, 1 반환.
+					BoyerMooreCtxDeInit(ctx);
 					return 1;
 				}
+				BoyerMooreCtxDeInit(ctx);
 			}
 		}
 	}
@@ -219,18 +221,21 @@ int main(int argc, char **argv)
 	h = nfq_open();
 	if (!h) {
 		fprintf(stderr, "error during nfq_open()\n");
+		free(target_string);
 		exit(1);
 	}
 
 	printf("unbinding existing nf_queue handler for AF_INET (if any)\n");
 	if (nfq_unbind_pf(h, AF_INET) < 0) {
 		fprintf(stderr, "error during nfq_unbind_pf()\n");
+		free(target_string);
 		exit(1);
 	}
 
 	printf("binding nfnetlink_queue as nf_queue handler for AF_INET\n");
 	if (nfq_bind_pf(h, AF_INET) < 0) {
 		fprintf(stderr, "error during nfq_bind_pf()\n");
+		free(target_string);
 		exit(1);
 	}
 
@@ -238,12 +243,14 @@ int main(int argc, char **argv)
 	qh = nfq_create_queue(h, queue, &cb, NULL);
 	if (!qh) {
 		fprintf(stderr, "error during nfq_create_queue()\n");
+		free(target_string);
 		exit(1);
 	}
 
 	printf("setting copy_packet mode\n");
 	if (nfq_set_mode(qh, NFQNL_COPY_PACKET, 0xffff) < 0) {
 		fprintf(stderr, "can't set packet_copy mode\n");
+		free(target_string);
 		exit(1);
 	}
 
@@ -297,5 +304,6 @@ int main(int argc, char **argv)
 	printf("closing library handle\n");
 	nfq_close(h);
 
+	free(target_string);
 	exit(0);
 }
