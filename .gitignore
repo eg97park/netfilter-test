@@ -30,4 +30,4 @@
 *.exe
 *.out
 *.app
-nfqnl_test
+netfilter-test
