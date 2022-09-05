@@ -114,6 +114,9 @@ int is_malicious(unsigned char **data, int len)
 		if (ptr != NULL){
 			return 1;
 		}
+		
+		// GET인데, 못찾은 경우.
+		return 0;
 	}
 
 	// 그다음 POST 확인.
@@ -122,6 +125,9 @@ int is_malicious(unsigned char **data, int len)
 		if (ptr != NULL){
 			return 1;
 		}
+
+		// POST인데, 못찾은 경우.
+		return 0;
 	}
 
 	// 보기 힘든 것들 확인.
@@ -136,8 +142,12 @@ int is_malicious(unsigned char **data, int len)
 		if (ptr != NULL){
 			return 1;
 		}
+
+		// HTTP REQUEST METHOD인데, 못찾은 경우.
+		return 0;
 	}
 	
+	// ?
 	return 0;
 }
 
