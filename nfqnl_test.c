@@ -2,6 +2,10 @@
  * gcc -o nfqnl_test nfqnl_test.c -lnetfilter_queue
  * syntax : netfilter-test <host>
  * sample : netfilter-test test.gilgil.net
+ * 
+sudo iptables -F &&
+sudo iptables -A OUTPUT -j NFQUEUE --queue-num 0 &&
+sudo iptables -A INPUT -j NFQUEUE --queue-num 0;
  */
 
 #include <stdio.h>
@@ -71,8 +75,16 @@ static uint32_t print_pkt (struct nfq_data *tb)
 		printf("secctx=\"%.*s\" ", ret, secdata);
 
 	ret = nfq_get_payload(tb, &data);
-	if (ret >= 0)
+	if (ret >= 0){
+		/**
+		 * @todo find start address of data from unsigned char *data
+		 * 1. parse and check host.
+		 * 2-1. if host is malicious, then return -1
+		 * 2-2. else, continue
+		 */
 		printf("payload_len=%d ", ret);
+	}
+		
 
 	fputc('\n', stdout);
 
@@ -85,6 +97,9 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 {
 	uint32_t id = print_pkt(nfa);
 	printf("entering callback\n");
+	/**
+	 * @todo if id is -1, NF_DROP
+	 */
 	return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
 }
 
