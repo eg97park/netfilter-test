@@ -93,6 +93,12 @@ int is_malicious(unsigned char **data, int len)
 				payload = *data + _ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4;
 				payload_len = len - (_ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4);
 
+				/**
+				 * @todo HTTP request method에 대해서만 처리.
+				 * https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods
+				 * GET, HEAD, POST, PUT, DELETE, CONNECT, OPTIONS, TRACE, PATCH
+				 */
+
 				// 전역변수로 선언된 g_target_string 문자열이 payload에 존재하는지 확인.
 				char* ptr = BoyerMoore(g_target_string, strlen(g_target_string), payload, payload_len, g_ctx);
 				if (ptr != NULL){
