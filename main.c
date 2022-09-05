@@ -1,8 +1,6 @@
 /**
- * gcc -o nfqnl_test nfqnl_test.c -lnetfilter_queue
- * syntax : netfilter-test <host>
- * sample : netfilter-test test.gilgil.net
- * 
+ * sudo iptables-save > ~/_iptables_backup
+ * sudo iptables-restore ~/_iptables_backup
 sudo iptables -F &&
 sudo iptables -A OUTPUT -j NFQUEUE --queue-num 0 &&
 sudo iptables -A INPUT -j NFQUEUE --queue-num 0;
@@ -26,7 +24,7 @@ static char* target_string;
 
 /**
  * @brief https://github.com/eg97park/pcap-test/blob/main/pcap-test.c
- * @comment 예전 pcap-test 과제에서 구현했던 구조체 재사용
+ * 예전 pcap-test 과제에서 구현했던 구조체 재사용
  */
 #pragma pack(1)
 struct MY_IPV4{
@@ -66,24 +64,14 @@ struct MY_TCP{
 	uint16_t URG_PTR;
 };
 
-void dump(unsigned char* buf, int size) {
-	int i;
-	for (i = 0; i < size; i++) {
-		if (i != 0 && i % 16 == 0)
-			printf("\n");
-		printf("%02X ", buf[i]);
-	}
-	printf("\n");
-}
-
-
 
 /**
- * @brief check malicious host from given payload
+ * @brief 주어진 패킷에서 전역변수로 설정된 target_string을 찾습니다.
+ *  찾았다면 악성으로 판단, 1을 반환합니다. 찾지 못헸다면 0을 반환합니다.
  * 
- * @param[in] data packet payload
- * @param[in] len packet length
- * @return[out] int 1:malicious, 0:normal
+ * @param[in] data 패킷
+ * @param[in] len 패킷 길이
+ * @return[out] int 1: 악성, 0: 정상
  */
 int is_malicious(unsigned char **data, int len)
 {
@@ -91,31 +79,30 @@ int is_malicious(unsigned char **data, int len)
 	uint32_t payload_len = 0;
 	struct MY_ETH* _ethhdr = (struct MY_ETH*)*data;
 
-	// catch IPv4
+	// IPv4 패킷만 처리.
 	if ((*data)[0] == '\x45'){
 		struct MY_IPV4* _ipv4hdr = (struct MY_IPV4*)(*data);
 
-		// catch TCP
+		// TCP 패킷만 처리.
 		if (_ipv4hdr->PROTOCOL == 0x06){
 			struct MY_TCP* _tcphdr = (struct MY_TCP*)(*data + _ipv4hdr->IHL * 4);
 
-			// catch dst.port = 80
+			// 목적지 포트가 80인 패킷만 처리.
 			if (_tcphdr->DST_PORT == 0x5000){
 				payload = *data + _ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4;
 				payload_len = len - (_ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4);
 
-				// catch "\r\nHost: <argv[1]>"
+				// 전역변수로 선언된 target_string 문자열이 payload에 존재하는지 확인.
 				BmCtx* ctx = BoyerMooreCtxInit((uint8_t*)target_string, strlen(target_string));
 				char* ptr = BoyerMoore(target_string, strlen(target_string), payload, payload_len, ctx);
 				if (ptr != NULL){
-					dump(payload, payload_len);
+					// 존재한다면, 1 반환.
 					return 1;
 				}
 			}
 		}
 	}
-
-
+	// 존재하지 않는다면, 0 반환.
 	return 0;
 }
 
@@ -180,8 +167,8 @@ static uint32_t print_pkt (struct nfq_data *tb)
 	if (ret >= 0){
 		printf("payload_len=%d\n", ret);
 
-		// check packet. if packet is malicous, then id *= (-1)
-		//dump(data, ret);
+		// 패킷의 악성 여부를 판단합니다.
+		// 악성이라면, id를 음수로 바꿉니다.
 		if (is_malicious(&data, ret)){
 			id = id * (-1);
 		}
@@ -199,7 +186,7 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 	uint32_t id = print_pkt(nfa);
 	printf("entering callback\n");
 
-	// if id < 0, DROP
+	// id 값이 음수, 즉 악성 패킷이라면 DROP.
 	if (id < 0){
 		return nfq_set_verdict(qh, id * (-1), NF_DROP, 0, NULL);
 	}
