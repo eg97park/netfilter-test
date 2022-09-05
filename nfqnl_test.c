@@ -22,6 +22,59 @@ sudo iptables -A INPUT -j NFQUEUE --queue-num 0;
 
 static char* target_host;
 
+/**
+ * @brief https://github.com/eg97park/pcap-test/blob/main/pcap-test.c
+ * @comment 예전 pcap-test 과제에서 구현했던 구조체 재사용
+ */
+#pragma pack(1)
+struct MY_IPV4{
+#if BYTE_ORDER == LITTLE_ENDIAN
+	u_char IHL:4;
+	u_char VER:4;
+#else
+	u_char VER:4;
+	u_char IHL:4;
+#endif
+	uint8_t DSCP_ECN;
+	uint16_t TOTAL_LEN;
+	uint16_t ID;
+	uint16_t FLAG_FRAGOFFSET;
+	uint8_t TTL;
+	uint8_t PROTOCOL;
+	uint16_t HDR_CHKSUM;
+	uint32_t SRC_IP_ADDR;
+	uint32_t DST_IP_ADDR;
+};
+
+struct MY_TCP{
+	uint16_t SRC_PORT;
+	uint16_t DST_PORT;
+	uint32_t SEQ_NUM;
+	uint32_t ACK_NUM;
+#if BYTE_ORDER == LITTLE_ENDIAN
+	u_char FLAGS_RESERVED_NS:4;
+	u_char DATA_OFFSET:4;
+#else
+	u_char DATA_OFFSET:4;
+	u_char FLAGS_RESERVED_NS:4;
+#endif
+	uint8_t FLAGS_ETC:4;
+	uint16_t WIN_SIZE;
+	uint16_t CHKSUM;
+	uint16_t URG_PTR;
+};
+
+void dump(unsigned char* buf, int size) {
+	int i;
+	for (i = 0; i < size; i++) {
+		if (i != 0 && i % 16 == 0)
+			printf("\n");
+		printf("%02X ", buf[i]);
+	}
+	printf("\n");
+}
+
+
 
 /**
  * @brief check malicious host from given payload
@@ -32,8 +85,30 @@ static char* target_host;
  */
 int is_malicious(unsigned char **data, int len)
 {
-	printf("@check_malicious\n");
-	printf("@check_malicious: target_host=%s\n", target_host);
+	printf("\n@is_malicious: target_host=%s\n", target_host);
+	unsigned char *payload = NULL;
+	uint32_t payload_len = 0;
+	struct MY_ETH* _ethhdr = (struct MY_ETH*)*data;
+	if ((*data)[0] == '\x45'){
+		struct MY_IPV4* _ipv4hdr = (struct MY_IPV4*)(*data);
+		if (_ipv4hdr->PROTOCOL == 0x06){
+			struct MY_TCP* _tcphdr = (struct MY_TCP*)(*data + _ipv4hdr->IHL * 4);
+			if (_tcphdr->DST_PORT == 0x5000){
+				payload = *data + _ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4;
+				payload_len = len - (_ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4);
+				char* ptr = strstr(payload, "\r\nHost: ");
+				if (ptr != NULL){
+					ptr += 8;
+					if (strstr(ptr, target_host) != NULL){
+						dump(payload, payload_len);
+						return 1;
+					}
+				}
+			}
+		}
+	}
+
+
 	return 0;
 }
 
@@ -96,9 +171,10 @@ static uint32_t print_pkt (struct nfq_data *tb)
 
 	ret = nfq_get_payload(tb, &data);
 	if (ret >= 0){
-		printf("payload_len=%d ", ret);
+		printf("payload_len=%d\n", ret);
 
 		// check packet. if packet is malicous, then id *= (-1)
+		//dump(data, ret);
 		if (is_malicious(&data, ret)){
 			id = id * (-1);
 		}
