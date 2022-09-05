@@ -81,34 +81,63 @@ int is_malicious(unsigned char **data, int len)
 	struct MY_ETH* _ethhdr = (struct MY_ETH*)*data;
 
 	// IPv4 패킷만 처리.
-	if ((*data)[0] == '\x45'){
-		struct MY_IPV4* _ipv4hdr = (struct MY_IPV4*)(*data);
+	if ((*data)[0] != '\x45'){
+		return 0;
+	}
 
-		// TCP 패킷만 처리.
-		if (_ipv4hdr->PROTOCOL == 0x06){
-			struct MY_TCP* _tcphdr = (struct MY_TCP*)(*data + _ipv4hdr->IHL * 4);
+	// TCP 패킷만 처리.
+	struct MY_IPV4* _ipv4hdr = (struct MY_IPV4*)(*data);
+	if (_ipv4hdr->PROTOCOL != 0x06){
+		return 0;
+	}
 
-			// 목적지 포트가 80인 패킷만 처리.
-			if (_tcphdr->DST_PORT == 0x5000){
-				payload = *data + _ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4;
-				payload_len = len - (_ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4);
+	// 목적지 포트가 80인 패킷만 처리.
+	struct MY_TCP* _tcphdr = (struct MY_TCP*)(*data + _ipv4hdr->IHL * 4);
+	if (_tcphdr->DST_PORT != 0x5000){
+		return 0;
+	}
 
-				/**
-				 * @todo HTTP request method에 대해서만 처리.
-				 * https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods
-				 * GET, HEAD, POST, PUT, DELETE, CONNECT, OPTIONS, TRACE, PATCH
-				 */
+	payload = *data + _ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4;
+	payload_len = len - (_ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4);
 
-				// 전역변수로 선언된 g_target_string 문자열이 payload에 존재하는지 확인.
-				char* ptr = BoyerMoore(g_target_string, strlen(g_target_string), payload, payload_len, g_ctx);
-				if (ptr != NULL){
-					// 존재한다면, 1 반환.
-					return 1;
-				}
-			}
+	/**
+	 * @todo HTTP request method에 대해서만 처리.
+	 * https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods
+	 * GET, HEAD, POST, PUT, DELETE, CONNECT, OPTIONS, TRACE, PATCH
+	 * GE,  HE,   PO,   PU,  DE,     CO,      OP,      TR,    PA만 비교해도 될 듯?
+	 */
+
+	// 보통 GET이니까 먼저 확인.
+	if (memcmp(payload, "GE", 2) == 0){
+		// 전역변수로 선언된 g_target_string 문자열이 payload에 존재하는지 확인.
+		char* ptr = BoyerMoore(g_target_string, strlen(g_target_string), payload, payload_len, g_ctx);
+		if (ptr != NULL){
+			return 1;
 		}
 	}
-	// 존재하지 않는다면, 0 반환.
+
+	// 그다음 POST 확인.
+	if (memcmp(payload, "PO", 2) == 0){
+		char* ptr = BoyerMoore(g_target_string, strlen(g_target_string), payload, payload_len, g_ctx);
+		if (ptr != NULL){
+			return 1;
+		}
+	}
+
+	// 보기 힘든 것들 확인.
+	if (memcmp(payload, "HE", 2) == 0
+	 || memcmp(payload, "PU", 2) == 0 
+	 || memcmp(payload, "DE", 2) == 0 
+	 || memcmp(payload, "CO", 2) == 0 
+	 || memcmp(payload, "OP", 2) == 0 
+	 || memcmp(payload, "TR", 2) == 0 
+	 || memcmp(payload, "PA", 2) == 0){
+		char* ptr = BoyerMoore(g_target_string, strlen(g_target_string), payload, payload_len, g_ctx);
+		if (ptr != NULL){
+			return 1;
+		}
+	}
+	
 	return 0;
 }
 
