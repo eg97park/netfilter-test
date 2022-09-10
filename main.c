@@ -19,7 +19,11 @@ sudo iptables -A INPUT -j NFQUEUE --queue-num 0;
 
 #include "bm.h"
 
-
+/**
+ * @brief 콜백 함수 cb로 넘길 구조체 선언.
+ * ctx bm 알고리즘용 변수.
+ * target_string 찾을 문자열.
+ */
 typedef struct cb_data_{
 	BmCtx* ctx;
 	char* target_string;
@@ -75,6 +79,8 @@ struct MY_TCP{
  * 
  * @param[in] data 패킷
  * @param[in] len 패킷 길이
+ * @param[in] ctx bm 알고리즘용 변수
+ * @param[in] target_string 찾을 문자열
  * @return[out] int 1: 악성, 0: 정상
  */
 int is_malicious(unsigned char **data, int len, BmCtx* ctx, char* target_string)
