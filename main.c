@@ -21,7 +21,6 @@ sudo iptables -A INPUT -j NFQUEUE --queue-num 0;
 
 
 static char* g_target_string;
-static BmCtx* g_ctx;
 
 /**
  * @brief https://github.com/eg97park/pcap-test/blob/main/pcap-test.c
@@ -74,7 +73,7 @@ struct MY_TCP{
  * @param[in] len 패킷 길이
  * @return[out] int 1: 악성, 0: 정상
  */
-int is_malicious(unsigned char **data, int len)
+int is_malicious(unsigned char **data, int len, BmCtx* ctx)
 {
 	unsigned char *payload = NULL;
 	uint32_t payload_len = 0;
@@ -110,7 +109,7 @@ int is_malicious(unsigned char **data, int len)
 	// 보통 GET이니까 먼저 확인.
 	if (memcmp(payload, "GE", 2) == 0){
 		// 전역변수로 선언된 g_target_string 문자열이 payload에 존재하는지 확인.
-		char* ptr = BoyerMoore(g_target_string, strlen(g_target_string), payload, payload_len, g_ctx);
+		char* ptr = BoyerMoore(g_target_string, strlen(g_target_string), payload, payload_len, ctx);
 		if (ptr != NULL){
 			return 1;
 		}
@@ -121,7 +120,7 @@ int is_malicious(unsigned char **data, int len)
 
 	// 그다음 POST 확인.
 	if (memcmp(payload, "PO", 2) == 0){
-		char* ptr = BoyerMoore(g_target_string, strlen(g_target_string), payload, payload_len, g_ctx);
+		char* ptr = BoyerMoore(g_target_string, strlen(g_target_string), payload, payload_len, ctx);
 		if (ptr != NULL){
 			return 1;
 		}
@@ -138,7 +137,7 @@ int is_malicious(unsigned char **data, int len)
 	 || memcmp(payload, "OP", 2) == 0 
 	 || memcmp(payload, "TR", 2) == 0 
 	 || memcmp(payload, "PA", 2) == 0){
-		char* ptr = BoyerMoore(g_target_string, strlen(g_target_string), payload, payload_len, g_ctx);
+		char* ptr = BoyerMoore(g_target_string, strlen(g_target_string), payload, payload_len, ctx);
 		if (ptr != NULL){
 			return 1;
 		}
@@ -153,7 +152,7 @@ int is_malicious(unsigned char **data, int len)
 
 
 /* returns packet id */
-static uint32_t print_pkt (struct nfq_data *tb)
+static uint32_t print_pkt (struct nfq_data *tb, BmCtx* ctx)
 {
 	int id = 0;
 	struct nfqnl_msg_packet_hdr *ph;
@@ -214,7 +213,7 @@ static uint32_t print_pkt (struct nfq_data *tb)
 
 		// 패킷의 악성 여부를 판단합니다.
 		// 악성이라면, id를 음수로 바꿉니다.
-		if (is_malicious(&data, ret)){
+		if (is_malicious(&data, ret, ctx)){
 			id = id * (-1);
 		}
 	}
@@ -228,7 +227,7 @@ static uint32_t print_pkt (struct nfq_data *tb)
 static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 	      struct nfq_data *nfa, void *data)
 {
-	uint32_t id = print_pkt(nfa);
+	uint32_t id = print_pkt(nfa, (BmCtx*) data);
 	printf("entering callback\n");
 
 	// id 값이 음수, 즉 악성 패킷이라면 DROP.
@@ -260,13 +259,13 @@ int main(int argc, char **argv)
 	memcpy(g_target_string, "\r\nHost: ", strlen("\r\nHost: "));
 	memcpy(g_target_string + strlen("\r\nHost: "), argv[1], strlen(argv[1]));
 
-	g_ctx = BoyerMooreCtxInit((uint8_t*)g_target_string, strlen(g_target_string));
+	BmCtx* ctx = BoyerMooreCtxInit((uint8_t*)g_target_string, strlen(g_target_string));
 
 	printf("opening library handle\n");
 	h = nfq_open();
 	if (!h) {
 		fprintf(stderr, "error during nfq_open()\n");
-		BoyerMooreCtxDeInit(g_ctx);
+		BoyerMooreCtxDeInit(ctx);
 		free(g_target_string);
 		exit(1);
 	}
@@ -274,7 +273,7 @@ int main(int argc, char **argv)
 	printf("unbinding existing nf_queue handler for AF_INET (if any)\n");
 	if (nfq_unbind_pf(h, AF_INET) < 0) {
 		fprintf(stderr, "error during nfq_unbind_pf()\n");
-		BoyerMooreCtxDeInit(g_ctx);
+		BoyerMooreCtxDeInit(ctx);
 		free(g_target_string);
 		exit(1);
 	}
@@ -282,16 +281,16 @@ int main(int argc, char **argv)
 	printf("binding nfnetlink_queue as nf_queue handler for AF_INET\n");
 	if (nfq_bind_pf(h, AF_INET) < 0) {
 		fprintf(stderr, "error during nfq_bind_pf()\n");
-		BoyerMooreCtxDeInit(g_ctx);
+		BoyerMooreCtxDeInit(ctx);
 		free(g_target_string);
 		exit(1);
 	}
 
 	printf("binding this socket to queue '%d'\n", queue);
-	qh = nfq_create_queue(h, queue, &cb, NULL);
+	qh = nfq_create_queue(h, queue, &cb, ctx);
 	if (!qh) {
 		fprintf(stderr, "error during nfq_create_queue()\n");
-		BoyerMooreCtxDeInit(g_ctx);
+		BoyerMooreCtxDeInit(ctx);
 		free(g_target_string);
 		exit(1);
 	}
@@ -299,7 +298,7 @@ int main(int argc, char **argv)
 	printf("setting copy_packet mode\n");
 	if (nfq_set_mode(qh, NFQNL_COPY_PACKET, 0xffff) < 0) {
 		fprintf(stderr, "can't set packet_copy mode\n");
-		BoyerMooreCtxDeInit(g_ctx);
+		BoyerMooreCtxDeInit(ctx);
 		free(g_target_string);
 		exit(1);
 	}
@@ -354,7 +353,7 @@ int main(int argc, char **argv)
 	printf("closing library handle\n");
 	nfq_close(h);
 
-	BoyerMooreCtxDeInit(g_ctx);
+	BoyerMooreCtxDeInit(ctx);
 	free(g_target_string);
 	exit(0);
 }
