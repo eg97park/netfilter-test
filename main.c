@@ -18,6 +18,7 @@ sudo iptables -A INPUT -j NFQUEUE --queue-num 0;
 #include <libnetfilter_queue/libnetfilter_queue.h>
 
 #include "bm.h"
+#include <stdbool.h>
 
 /**
  * @brief 콜백 함수 cb로 넘길 구조체 선언.
@@ -27,6 +28,7 @@ sudo iptables -A INPUT -j NFQUEUE --queue-num 0;
 typedef struct cb_data_{
 	BmCtx* ctx;
 	char* target_string;
+	bool isMalicious;
 }CbData;
 
 
@@ -75,15 +77,15 @@ struct MY_TCP{
 
 /**
  * @brief 주어진 패킷에서 전역변수로 설정된 target_string을 찾습니다.
- *  찾았다면 악성으로 판단, 1을 반환합니다. 찾지 못헸다면 0을 반환합니다.
+ *  찾았다면 악성으로 판단, 주어진 구조체 cbData 내부의 플래그를 1로 설정합니다.
+ *  그렇지 않다면 0으로 설정합니다.
  * 
  * @param[in] data 패킷
  * @param[in] len 패킷 길이
- * @param[in] ctx bm 알고리즘용 변수
- * @param[in] target_string 찾을 문자열
+ * @param[in] cbData bm 알고리즘용 변수
  * @return[out] int 1: 악성, 0: 정상
  */
-int is_malicious(unsigned char **data, int len, BmCtx* ctx, char* target_string)
+int is_malicious(unsigned char **data, int len, CbData* cbData)
 {
 	unsigned char *payload = NULL;
 	uint32_t payload_len = 0;
@@ -102,67 +104,46 @@ int is_malicious(unsigned char **data, int len, BmCtx* ctx, char* target_string)
 
 	// 목적지 포트가 80인 패킷만 처리.
 	struct MY_TCP* _tcphdr = (struct MY_TCP*)(*data + _ipv4hdr->IHL * 4);
-	if (_tcphdr->DST_PORT != 0x5000){
+	if (ntohs(_tcphdr->DST_PORT) != 0x0050){
 		return 0;
 	}
 
 	payload = *data + _ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4;
 	payload_len = len - (_ipv4hdr->IHL * 4 + _tcphdr->DATA_OFFSET * 4);
 
+		fprintf(stderr, "#################################\n");
 	/**
 	 * @todo HTTP request method에 대해서만 처리.
 	 * https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods
 	 * GET, HEAD, POST, PUT, DELETE, CONNECT, OPTIONS, TRACE, PATCH
-	 * GE,  HE,   PO,   PU,  DE,     CO,      OP,      TR,    PA만 비교해도 될 듯?
 	 */
 
-	// 보통 GET이니까 먼저 확인.
-	if (memcmp(payload, "GE", 2) == 0){
+	// HTTP Method 체크.
+	if (memcmp(payload, "GET ", 4) == 0 ||
+	 memcmp(payload, "POST", 4) == 0 ||
+	 memcmp(payload, "HEAD", 4) == 0 ||
+	 memcmp(payload, "PUT ", 4) == 0 ||
+	 memcmp(payload, "DELE", 4) == 0 ||
+	 memcmp(payload, "CONN", 4) == 0 ||
+	 memcmp(payload, "OPTI", 4) == 0 ||
+	 memcmp(payload, "TRAC", 4) == 0 ||
+	 memcmp(payload, "PATC", 4) == 0){
 		// target_string 문자열이 payload에 존재하는지 확인.
-		char* ptr = BoyerMoore(target_string, strlen(target_string), payload, payload_len, ctx);
+		fprintf(stderr, "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n");
+		fprintf(stderr, "method=%c%c%c%c\n", payload[0], payload[1], payload[2], payload[3]);
+		char* ptr = BoyerMoore(cbData->target_string, strlen(cbData->target_string), payload, payload_len, cbData->ctx);
 		if (ptr != NULL){
+			// 악성이라면, 플래그 설정.
+			cbData->isMalicious = true;
 			return 1;
-		}
-		
-		// GET인데, 못찾은 경우.
-		return 0;
+		} 
 	}
-
-	// 그다음 POST 확인.
-	if (memcmp(payload, "PO", 2) == 0){
-		char* ptr = BoyerMoore(target_string, strlen(target_string), payload, payload_len, ctx);
-		if (ptr != NULL){
-			return 1;
-		}
-
-		// POST인데, 못찾은 경우.
-		return 0;
-	}
-
-	// 보기 힘든 것들 확인.
-	if (memcmp(payload, "HE", 2) == 0
-	 || memcmp(payload, "PU", 2) == 0 
-	 || memcmp(payload, "DE", 2) == 0 
-	 || memcmp(payload, "CO", 2) == 0 
-	 || memcmp(payload, "OP", 2) == 0 
-	 || memcmp(payload, "TR", 2) == 0 
-	 || memcmp(payload, "PA", 2) == 0){
-		char* ptr = BoyerMoore(target_string, strlen(target_string), payload, payload_len, ctx);
-		if (ptr != NULL){
-			return 1;
-		}
-
-		// HTTP REQUEST METHOD인데, 못찾은 경우.
-		return 0;
-	}
-	
-	// ?
 	return 0;
 }
 
 
 /* returns packet id */
-static uint32_t print_pkt (struct nfq_data *tb, BmCtx* ctx, char* target_string)
+static uint32_t print_pkt (struct nfq_data *tb, CbData* cbData)
 {
 	int id = 0;
 	struct nfqnl_msg_packet_hdr *ph;
@@ -174,7 +155,7 @@ static uint32_t print_pkt (struct nfq_data *tb, BmCtx* ctx, char* target_string)
 	ph = nfq_get_msg_packet_hdr(tb);
 	if (ph) {
 		id = ntohl(ph->packet_id);
-		printf("hw_protocol=0x%04x hook=%u id=%u ",
+		printf("hw_protocol=0x%04x hook=%u id=%u ", 
 			ntohs(ph->hw_protocol), ph->hook, id);
 	}
 
@@ -223,7 +204,7 @@ static uint32_t print_pkt (struct nfq_data *tb, BmCtx* ctx, char* target_string)
 
 		// 패킷의 악성 여부를 판단합니다.
 		// 악성이라면, id를 음수로 바꿉니다.
-		if (is_malicious(&data, ret, ctx, target_string)){
+		if (is_malicious(&data, ret, cbData)){
 			id = id * (-1);
 		}
 	}
@@ -237,13 +218,13 @@ static uint32_t print_pkt (struct nfq_data *tb, BmCtx* ctx, char* target_string)
 static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 	      struct nfq_data *nfa, void *data)
 {
-	uint32_t id = print_pkt(nfa, ((CbData*)data)->ctx, ((CbData*)data)->target_string);
-	printf("entering callback\n");
+	uint32_t id = print_pkt(nfa, (CbData*)data);
 
 	// id 값이 음수, 즉 악성 패킷이라면 DROP.
-	if (id < 0){
-		return nfq_set_verdict(qh, id * (-1), NF_DROP, 0, NULL);
+	if (((CbData*)data)->isMalicious){
+		return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
 	}
+	// 0, NULL); -> 패킷에 변화 X. IP 헤더부터의 길이. 변조 가능.
 	return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
 }
 
@@ -271,6 +252,7 @@ int main(int argc, char **argv)
 	memcpy(cb_params.target_string, "\r\nHost: ", strlen("\r\nHost: "));
 	memcpy(cb_params.target_string + strlen("\r\nHost: "), argv[1], strlen(argv[1]));
 	cb_params.ctx = BoyerMooreCtxInit((uint8_t*)cb_params.target_string, strlen(cb_params.target_string));
+	cb_params.isMalicious = false;
 
 	printf("opening library handle\n");
 	h = nfq_open();
